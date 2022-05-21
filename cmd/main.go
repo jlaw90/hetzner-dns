@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io/ioutil"
 	"os"
 
 	dns "github.com/jlaw90/hetzner-dns"
@@ -27,8 +28,8 @@ func main() {
 
 	export, err := client.ExportZone(zone.Zone.ID)
 
-	fmt.Printf("EXPORT ZONE: %v\n%+v\n", err, string(export))
+	fmt.Printf("EXPORT ZONE: %v\n%+v\n", err, export)
 
-	result, err := client.ImportZone(zone.Zone.ID, bytes.NewBuffer(export))
+	result, err := client.ImportZone(zone.Zone.ID, ioutil.NopCloser(bytes.NewBuffer([]byte(export))))
 	fmt.Printf("IMPORT ZONE: %v\n%+v\n", err, result)
 }

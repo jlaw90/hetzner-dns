@@ -1,6 +1,7 @@
 package dns
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,6 +29,109 @@ type ErrorResponse struct {
 
 func (er ErrorResponse) Error() string {
 	return fmt.Sprintf("%v: %s", er.Code, er.Message)
+}
+
+type requestBuilder struct {
+	*http.Request
+	client *clientImpl
+}
+
+func (rb requestBuilder) AddQueryParams(params url.Values) requestBuilder {
+	if len(params) == 0 {
+		return rb
+	}
+	if rb.URL.RawQuery == "" {
+		rb.URL.RawQuery = params.Encode()
+	} else {
+		rb.URL.RawQuery += "&" + params.Encode()
+	}
+	return rb
+}
+
+func (rb requestBuilder) Send() (*http.Response, error) {
+	rb.Header.Add("Auth-API-Token", rb.client.token)
+
+	response, err := rb.client.client.Do(rb.Request)
+	if err != nil {
+		return nil, err
+	}
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		responseErr := ErrorResponse{
+			Code:    response.StatusCode,
+			Message: response.Status,
+		}
+
+		body, err := ioutil.ReadAll(response.Body)
+		if err != nil {
+			return response, responseErr
+		}
+
+		raw := make(map[string]interface{})
+		err = json.Unmarshal(body, &raw)
+		if err != nil && raw["error"] != nil {
+			errorString, ok := raw["error"].(string)
+			if ok {
+				responseErr.Message = errorString
+			}
+		}
+		return response, responseErr
+	}
+
+	return response, nil
+}
+
+func (rb requestBuilder) WritePlain(body io.ReadCloser) requestBuilder {
+	rb.Header.Add("Content-Type", "text/plain")
+	rb.Body = body
+	return rb
+}
+
+func (rb requestBuilder) ReadPlain() (string, error) {
+	rb.Header.Add("Accept", "text/plain")
+
+	response, err := rb.Send()
+	if err != nil {
+		return "", err
+	}
+
+	data, err := ioutil.ReadAll(response.Body)
+	if err != nil {
+		return "", err
+	}
+
+	return string(data), nil
+}
+
+func (rb requestBuilder) WriteJSON(body interface{}) requestBuilder {
+	rb.Header.Add("Content-Type", "application/json")
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		panic(err)
+	}
+	rb.Body = ioutil.NopCloser(bytes.NewBuffer(encoded))
+	return rb
+}
+
+func (rb requestBuilder) ReadJSON(result interface{}) error {
+	rb.Header.Add("Accept", "application/json")
+
+	response, err := rb.Send()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		ioutil.ReadAll(response.Body)
+		response.Body.Close()
+	}()
+	return json.NewDecoder(response.Body).Decode(&result)
+}
+
+func (rb requestBuilder) JSON(body interface{}, result interface{}) error {
+	if body != nil {
+		rb.WriteJSON(body)
+	}
+	return rb.ReadJSON(result)
 }
 
 type clientImpl struct {
@@ -63,55 +167,8 @@ func addPagedQueryParams(query url.Values, request PagedRequest) {
 	}
 }
 
-func (c clientImpl) request(method, path string, query url.Values, body io.Reader, result interface{}) (*http.Response, error) {
+func (c clientImpl) request(method, path string) requestBuilder {
 	absoluteUrl := fmt.Sprintf("%s/%s", c.url, path)
-	if len(query) > 0 {
-		absoluteUrl += "?" + query.Encode()
-	}
-	req, err := http.NewRequest(method, absoluteUrl, body)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Add("Auth-API-Token", c.token)
-
-	response, err := c.client.Do(req)
-
-	if err != nil {
-		return nil, err
-	}
-
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		responseErr := ErrorResponse{
-			Code:    response.StatusCode,
-			Message: response.Status,
-		}
-
-		body, err := ioutil.ReadAll(response.Body)
-		if err != nil {
-			return response, responseErr
-		}
-
-		raw := make(map[string]interface{})
-		err = json.Unmarshal(body, &raw)
-		if err != nil && raw["error"] != nil {
-			errorString, ok := raw["error"].(string)
-			if ok {
-				responseErr.Message = errorString
-			}
-		}
-		return response, responseErr
-	}
-
-	if result != nil {
-		delayedDecode := json.RawMessage{}
-		err = json.NewDecoder(response.Body).Decode(&delayedDecode)
-		ioutil.ReadAll(response.Body)
-		response.Body.Close()
-		if err == nil {
-			fmt.Printf("RAW RESPONSE: %+v\n", string(delayedDecode))
-			err = json.Unmarshal(delayedDecode, &result)
-		}
-	}
-
-	return response, nil
+	req, _ := http.NewRequest(method, absoluteUrl, nil)
+	return requestBuilder{req, &c}
 }

@@ -1,11 +1,9 @@
 package dns
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/url"
 	"time"
 )
@@ -91,9 +89,9 @@ type ZoneAPI interface {
 	GetZone(id string) (SingleZoneResponse, error)
 	UpdateZone(id string, update WriteZoneRequest) (SingleZoneResponse, error)
 	DeleteZone(id string) error
-	ImportZone(id string, file io.Reader) (SingleZoneResponse, error)
-	ExportZone(id string) ([]byte, error)
-	ValidateZone(file io.Reader) (ValidateZoneResponse, error)
+	ImportZone(id string, file io.ReadCloser) (SingleZoneResponse, error)
+	ExportZone(id string) (string, error)
+	ValidateZone(file io.ReadCloser) (ValidateZoneResponse, error)
 }
 
 func (c clientImpl) GetZones(req GetZonesRequest) (response GetZonesResponse, err error) {
@@ -106,56 +104,40 @@ func (c clientImpl) GetZones(req GetZonesRequest) (response GetZonesResponse, er
 	}
 	addPagedQueryParams(query, req.PagedRequest)
 
-	_, err = c.request("GET", "zones", query, nil, &response)
-
+	err = c.request("GET", "zones").AddQueryParams(query).ReadJSON(&response)
 	return response, err
 }
 
 func (c clientImpl) CreateZone(create WriteZoneRequest) (response SingleZoneResponse, err error) {
-	encodedBody, err := json.Marshal(create)
-	if err != nil {
-		return response, err
-	}
-	_, err = c.request("POST", "zones", nil, bytes.NewBuffer(encodedBody), &response)
-
+	err = c.request("POST", "zones").JSON(create, &response)
 	return response, err
 }
 
 func (c clientImpl) GetZone(id string) (response SingleZoneResponse, err error) {
-	_, err = c.request("GET", fmt.Sprintf("zones/%s", id), nil, nil, &response)
+	err = c.request("GET", fmt.Sprintf("zones/%s", id)).ReadJSON(&response)
 	return response, err
 }
 
 func (c clientImpl) UpdateZone(id string, update WriteZoneRequest) (response SingleZoneResponse, err error) {
-	encodedBody, err := json.Marshal(update)
-	if err != nil {
-		return response, err
-	}
-	_, err = c.request("PATCH", fmt.Sprintf("zones/%s", id), nil, bytes.NewBuffer(encodedBody), &response)
-
+	err = c.request("PATCH", fmt.Sprintf("zones/%s", id)).JSON(update, &response)
 	return response, err
 }
 
 func (c clientImpl) DeleteZone(id string) error {
-	_, err := c.request("DELETE", fmt.Sprintf("zones/%s", id), nil, nil, nil)
+	_, err := c.request("DELETE", fmt.Sprintf("zones/%s", id)).Send()
 	return err
 }
 
-func (c clientImpl) ImportZone(id string, file io.Reader) (response SingleZoneResponse, err error) {
-	_, err = c.request("POST", fmt.Sprintf("zones/%s/import", id), nil, file, &response)
+func (c clientImpl) ImportZone(id string, file io.ReadCloser) (response SingleZoneResponse, err error) {
+	err = c.request("POST", fmt.Sprintf("zones/%s/import", id)).WritePlain(file).ReadJSON(&response)
 	return response, err
 }
 
-func (c clientImpl) ExportZone(id string) ([]byte, error) {
-	resp, err := c.request("GET", fmt.Sprintf("zones/%s/export", id), nil, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	return ioutil.ReadAll(resp.Body)
+func (c clientImpl) ExportZone(id string) (string, error) {
+	return c.request("GET", fmt.Sprintf("zones/%s/export", id)).ReadPlain()
 }
 
-func (c clientImpl) ValidateZone(file io.Reader) (response ValidateZoneResponse, err error) {
-	_, err = c.request("POST", "/zones/file/validate", nil, file, &response)
+func (c clientImpl) ValidateZone(file io.ReadCloser) (response ValidateZoneResponse, err error) {
+	err = c.request("POST", "/zones/file/validate").WritePlain(file).ReadJSON(&response)
 	return response, err
 }
