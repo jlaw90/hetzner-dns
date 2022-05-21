@@ -1,5 +1,10 @@
 package dns
 
+import (
+	"fmt"
+	"net/url"
+)
+
 type recordType string
 
 const (
@@ -75,4 +80,47 @@ type RecordAPI interface {
 	DeleteRecord(id string) error
 	CreateRecords([]WriteRecordRequest) (BulkCreateRecordsResponse, error)
 	UpdateRecords([]BulkUpdateRecord) (BulkUpdateResponse, error)
+}
+
+func (c clientImpl) GetRecords(request GetRecordsRequest) (response GetRecordsResponse, err error) {
+	query := url.Values{}
+	if request.ZoneID != "" {
+		query.Set("zone_id", request.ZoneID)
+	}
+	err = c.request("GET", "records").AddQueryParams(query).ReadJSON(&response)
+	return response, err
+}
+
+func (c clientImpl) CreateRecord(create WriteRecordRequest) (response SingleRecordResponse, err error) {
+	err = c.request("POST", "records").JSON(create, &response)
+	return response, nil
+}
+
+func (c clientImpl) GetRecord(id string) (response SingleRecordResponse, err error) {
+	err = c.request("GET", fmt.Sprintf("records/%s", id)).ReadJSON(&response)
+	return response, err
+}
+
+func (c clientImpl) UpdateRecord(id string, update WriteRecordRequest) (response SingleRecordResponse, err error) {
+	err = c.request("PATCH", fmt.Sprintf("records/%s", id)).JSON(update, &response)
+	return response, err
+}
+
+func (c clientImpl) DeleteRecord(id string) error {
+	_, err := c.request("DELETE", fmt.Sprintf("records/%s", id)).Send()
+	return err
+}
+
+func (c clientImpl) CreateRecords(records []WriteRecordRequest) (response BulkCreateRecordsResponse, err error) {
+	err = c.request("POST", "records/bulk").JSON(map[string]interface{}{
+		"records": records,
+	}, &response)
+	return response, err
+}
+
+func (c clientImpl) UpdateRecords(records []BulkUpdateRecord) (response BulkUpdateResponse, err error) {
+	err = c.request("PUT", "records/bulk").JSON(map[string]interface{}{
+		"records": records,
+	}, &response)
+	return response, err
 }
